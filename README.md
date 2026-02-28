@@ -307,8 +307,6 @@ use Ada/SPARK.
 
 Timing attacks exploit variations in execution time to guess sensitive data (e.g., passwords or tokens). The `vanadium` module provides utilities to enforce constant execution times and secure string comparisons to neutralize these vulnerabilities.
 
----
-
 ### Constant-Time Comparisons
 Standard string comparisons exit early on mismatches, leaking timing data. Use `constant_time_eq_strings` to safely compare cryptographic tokens or hashes by checking every byte regardless of where a mismatch occurs.
 
@@ -320,8 +318,6 @@ fn verify_token(user_input string, real_token string) bool {
     return vanadium.constant_time_eq_strings(user_input, real_token)
 }
 ```
-
----
 
 ### Constant Execution Time
 When handling authentication or payments, the total response time should remain identical whether the internal operation succeeds or fails. You can enforce a fixed execution duration using `TimingGuard`.
@@ -345,8 +341,6 @@ vanadium.timed_call_ms(500, fn () {
 })!
 ```
 
----
-
 ### Timing Reports
 To audit your execution times and ensure your target duration is long enough, use `.pad_report()` instead of `.pad()`.
 
@@ -359,6 +353,71 @@ println(report)
 // TimingReport{ exec: 120.00ms, pad: 380.00ms, total: 500.00ms, status: PADDED }
 ```
 *(If the execution takes longer than 500ms, the report will flag `exceeded: true` without padding).*
+
+---
+
+## Hardware Attack Protection
+
+Modern attacks like Rowhammer and Spectre/Meltdown operate below the software layer, exploiting physical properties of RAM and CPU speculative execution. While these are hardware flaws, software-level mitigations can detect or neutralize their effects.
+
+### Anti-Rowhammer: Integrity-Checked Variables
+
+Rowhammer attacks flip bits in physical RAM by rapidly accessing adjacent memory rows. A single bit-flip can change a boolean `is_admin` from `false` to `true`, or silently alter an account balance.
+
+The `Hardened` types store every value alongside its bitwise complement (`~value`). On every read, the value is verified against its complement. If even one bit has been flipped in either copy, the mismatch is detected and the operation is rejected.
+
+```v
+import vanadium
+
+// For critical booleans (e.g., permission flags)
+mut is_admin := vanadium.new_hardened_bool(false)
+is_admin.get() or { panic('memory corruption detected') }
+
+// For critical integers (e.g., cryptographic counters)
+mut counter := vanadium.new_hardened_i64(0)
+counter = counter.checked_add(1) or { panic('corruption or overflow') }
+
+// For critical bounded values (e.g., account balances)
+mut balance := vanadium.HardenedRangedInt.create(0, 99999999, 500000)!
+balance = balance.checked_sub(100000)!
+val := balance.value() or { panic('memory corruption detected') }
+```
+
+`HardenedBool` uses 64-bit patterns (`0xAAAA...` for true, `0x5555...` for false) instead of a single bit, so a single bit-flip will match neither pattern and will be caught immediately.
+
+These types are recommended for variables where a silent bit-flip would have catastrophic consequences: permission flags, balances, cryptographic keys, and transaction counters.
+
+### Anti-Spectre: Branchless Index Masking
+
+Spectre exploits CPU speculative execution. When code contains `if index < len { return array[index] }`, the CPU may speculatively read `array[index]` before evaluating the condition. Even though the result is discarded, the data leaks into the CPU cache where an attacker can extract it.
+
+`safe_index_mask` eliminates this by computing the index using only bitwise operations, with no conditional branch for the CPU to speculate on. If the index is out of bounds, it is forced to zero without any branch.
+
+```v
+import vanadium
+
+data := [10, 20, 30, 40, 50]
+user_index := get_user_input() // potentially malicious
+
+// Mask the index before accessing memory
+safe_idx := vanadium.safe_index_mask(user_index, data.len)
+
+// Even if user_index is out of bounds, the CPU never touches invalid memory
+val := data[safe_idx]
+```
+
+This is primarily relevant for cryptographic engines, lookup tables indexed by secret data, or any context where cache-based side-channel leaks are a concern.
+
+### Performance Overhead
+
+| Type | Overhead per operation | Recommended for |
+|---|---|---|
+| `HardenedI64` | ~1 CPU cycle (single NOT) | Crypto keys, counters |
+| `HardenedBool` | ~1 CPU cycle | Permission flags, auth state |
+| `HardenedRangedInt` | ~3 CPU cycles (3x NOT) | Balances, critical bounded values |
+| `safe_index_mask` | ~3 CPU cycles (shift + AND) | Secret-indexed lookups |
+
+For typical applications, this overhead is negligible. Use standard `RangedInt` and `SafeVar` for non-critical data, and reserve `Hardened` types for values where silent corruption would be catastrophic.
 
 ---
 

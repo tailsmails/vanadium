@@ -956,3 +956,436 @@ fn test_timed_call_with_result_workflow() {
 	assert report.was_padded == true
 	assert report.total == 250 * time.millisecond
 }
+
+fn test_hardened_i64_basic() {
+	h := new_hardened_i64(42)
+	assert h.get() or { panic(err.str()) } == 42
+	assert h.verify() == true
+}
+
+fn test_hardened_i64_zero() {
+	h := new_hardened_i64(0)
+	assert h.get() or { panic(err.str()) } == 0
+	assert h.verify() == true
+}
+
+fn test_hardened_i64_negative() {
+	h := new_hardened_i64(-999)
+	assert h.get() or { panic(err.str()) } == -999
+}
+
+fn test_hardened_i64_set() {
+	mut h := new_hardened_i64(10)
+	h.set(20)
+	assert h.get() or { panic(err.str()) } == 20
+	assert h.verify() == true
+}
+
+fn test_hardened_i64_corruption_val() {
+	h := HardenedI64{
+		val:   12345
+		guard: ~i64(99999)
+	}
+	assert h.verify() == false
+	if _ := h.get() {
+		assert false
+	}
+}
+
+fn test_hardened_i64_corruption_guard() {
+	h := HardenedI64{
+		val:   42
+		guard: ~i64(42) ^ i64(1)
+	}
+	assert h.verify() == false
+	if _ := h.get() {
+		assert false
+	}
+}
+
+fn test_hardened_i64_checked_add() {
+	h := new_hardened_i64(100)
+	h2 := h.checked_add(50) or { panic(err.str()) }
+	assert h2.get() or { panic(err.str()) } == 150
+}
+
+fn test_hardened_i64_checked_add_overflow() {
+	h := new_hardened_i64(max_i64_val)
+	if _ := h.checked_add(1) {
+		assert false
+	}
+}
+
+fn test_hardened_i64_checked_sub() {
+	h := new_hardened_i64(100)
+	h2 := h.checked_sub(30) or { panic(err.str()) }
+	assert h2.get() or { panic(err.str()) } == 70
+}
+
+fn test_hardened_i64_checked_sub_underflow() {
+	h := new_hardened_i64(min_i64_val)
+	if _ := h.checked_sub(1) {
+		assert false
+	}
+}
+
+fn test_hardened_i64_checked_mul() {
+	h := new_hardened_i64(7)
+	h2 := h.checked_mul(6) or { panic(err.str()) }
+	assert h2.get() or { panic(err.str()) } == 42
+}
+
+fn test_hardened_i64_checked_div() {
+	h := new_hardened_i64(100)
+	h2 := h.checked_div(4) or { panic(err.str()) }
+	assert h2.get() or { panic(err.str()) } == 25
+}
+
+fn test_hardened_i64_checked_div_zero() {
+	h := new_hardened_i64(100)
+	if _ := h.checked_div(0) {
+		assert false
+	}
+}
+
+fn test_hardened_i64_corrupted_add_rejected() {
+	h := HardenedI64{
+		val:   100
+		guard: ~i64(999)
+	}
+	if _ := h.checked_add(1) {
+		assert false
+	}
+}
+
+fn test_hardened_i64_str() {
+	h := new_hardened_i64(42)
+	assert h.str() == '42 (hardened)'
+}
+
+fn test_hardened_i64_str_corrupted() {
+	h := HardenedI64{
+		val:   1
+		guard: i64(0)
+	}
+	assert h.str() == 'CORRUPTED'
+}
+
+fn test_hardened_bool_true() {
+	h := new_hardened_bool(true)
+	assert h.get() or { panic(err.str()) } == true
+	assert h.verify() == true
+}
+
+fn test_hardened_bool_false() {
+	h := new_hardened_bool(false)
+	assert h.get() or { panic(err.str()) } == false
+	assert h.verify() == true
+}
+
+fn test_hardened_bool_set() {
+	mut h := new_hardened_bool(false)
+	h.set(true)
+	assert h.get() or { panic(err.str()) } == true
+	h.set(false)
+	assert h.get() or { panic(err.str()) } == false
+}
+
+fn test_hardened_bool_corruption_guard() {
+	h := HardenedBool{
+		val:   hardened_true_pattern
+		guard: u64(0)
+	}
+	assert h.verify() == false
+	if _ := h.get() {
+		assert false
+	}
+}
+
+fn test_hardened_bool_corruption_val_bitflip() {
+	h := HardenedBool{
+		val:   hardened_true_pattern ^ u64(1)
+		guard: ~(hardened_true_pattern ^ u64(1))
+	}
+	assert h.verify() == false
+	if _ := h.get() {
+		assert false
+	}
+}
+
+fn test_hardened_bool_corruption_unknown_state() {
+	h := HardenedBool{
+		val:   u64(0x1234567890ABCDEF)
+		guard: ~u64(0x1234567890ABCDEF)
+	}
+	if _ := h.get() {
+		assert false
+	}
+}
+
+fn test_hardened_bool_str() {
+	h := new_hardened_bool(true)
+	assert h.str() == 'true (hardened)'
+	h2 := new_hardened_bool(false)
+	assert h2.str() == 'false (hardened)'
+}
+
+fn test_hardened_bool_str_corrupted() {
+	h := HardenedBool{
+		val:   u64(0)
+		guard: u64(0)
+	}
+	assert h.str() == 'CORRUPTED'
+}
+
+fn test_hardened_ranged_create_valid() {
+	h := HardenedRangedInt.create(0, 100, 50) or { panic(err.str()) }
+	assert h.value() or { panic(err.str()) } == 50
+	assert h.min_val() or { panic(err.str()) } == 0
+	assert h.max_val() or { panic(err.str()) } == 100
+}
+
+fn test_hardened_ranged_create_invalid_range() {
+	if _ := HardenedRangedInt.create(100, 0, 50) {
+		assert false
+	}
+}
+
+fn test_hardened_ranged_create_out_of_range() {
+	if _ := HardenedRangedInt.create(0, 100, 200) {
+		assert false
+	}
+}
+
+fn test_hardened_ranged_assign() {
+	mut h := HardenedRangedInt.create(0, 100, 50) or { panic(err.str()) }
+	h.assign(75) or { panic(err.str()) }
+	assert h.value() or { panic(err.str()) } == 75
+}
+
+fn test_hardened_ranged_assign_invalid() {
+	mut h := HardenedRangedInt.create(0, 100, 50) or { panic(err.str()) }
+	mut failed := false
+	h.assign(200) or { failed = true }
+	assert failed
+	assert h.value() or { panic(err.str()) } == 50
+}
+
+fn test_hardened_ranged_in_range() {
+	h := HardenedRangedInt.create(0, 100, 50) or { panic(err.str()) }
+	assert (h.in_range(50) or { panic(err.str()) }) == true
+	assert (h.in_range(0) or { panic(err.str()) }) == true
+	assert (h.in_range(100) or { panic(err.str()) }) == true
+	assert (h.in_range(-1) or { panic(err.str()) }) == false
+	assert (h.in_range(101) or { panic(err.str()) }) == false
+}
+
+fn test_hardened_ranged_checked_add() {
+	h := HardenedRangedInt.create(-50, 50, 10) or { panic(err.str()) }
+	h2 := h.checked_add(30) or { panic(err.str()) }
+	assert h2.value() or { panic(err.str()) } == 40
+}
+
+fn test_hardened_ranged_checked_add_out_of_range() {
+	h := HardenedRangedInt.create(0, 100, 90) or { panic(err.str()) }
+	if _ := h.checked_add(20) {
+		assert false
+	}
+}
+
+fn test_hardened_ranged_checked_sub() {
+	h := HardenedRangedInt.create(0, 100, 50) or { panic(err.str()) }
+	h2 := h.checked_sub(30) or { panic(err.str()) }
+	assert h2.value() or { panic(err.str()) } == 20
+}
+
+fn test_hardened_ranged_checked_mul() {
+	h := HardenedRangedInt.create(-1000, 1000, 7) or { panic(err.str()) }
+	h2 := h.checked_mul(10) or { panic(err.str()) }
+	assert h2.value() or { panic(err.str()) } == 70
+}
+
+fn test_hardened_ranged_checked_div() {
+	h := HardenedRangedInt.create(0, 1000, 100) or { panic(err.str()) }
+	h2 := h.checked_div(4) or { panic(err.str()) }
+	assert h2.value() or { panic(err.str()) } == 25
+}
+
+fn test_hardened_ranged_checked_div_zero() {
+	h := HardenedRangedInt.create(0, 100, 50) or { panic(err.str()) }
+	if _ := h.checked_div(0) {
+		assert false
+	}
+}
+
+fn test_hardened_ranged_corruption_value() {
+	h := HardenedRangedInt{
+		val:       50
+		min:       0
+		max:       100
+		val_guard: ~i64(99)
+		min_guard: ~i64(0)
+		max_guard: ~i64(100)
+	}
+	if _ := h.value() {
+		assert false
+	}
+}
+
+fn test_hardened_ranged_corruption_min() {
+	h := HardenedRangedInt{
+		val:       50
+		min:       0
+		max:       100
+		val_guard: ~i64(50)
+		min_guard: ~i64(999)
+		max_guard: ~i64(100)
+	}
+	if _ := h.value() {
+		assert false
+	}
+}
+
+fn test_hardened_ranged_corruption_max() {
+	h := HardenedRangedInt{
+		val:       50
+		min:       0
+		max:       100
+		val_guard: ~i64(50)
+		min_guard: ~i64(0)
+		max_guard: ~i64(999)
+	}
+	if _ := h.value() {
+		assert false
+	}
+}
+
+fn test_hardened_ranged_corrupted_blocks_add() {
+	h := HardenedRangedInt{
+		val:       50
+		min:       0
+		max:       100
+		val_guard: ~i64(42)
+		min_guard: ~i64(0)
+		max_guard: ~i64(100)
+	}
+	if _ := h.checked_add(1) {
+		assert false
+	}
+}
+
+fn test_hardened_ranged_corrupted_blocks_sub() {
+	h := HardenedRangedInt{
+		val:       50
+		min:       0
+		max:       100
+		val_guard: ~i64(50)
+		min_guard: ~i64(1)
+		max_guard: ~i64(100)
+	}
+	if _ := h.checked_sub(1) {
+		assert false
+	}
+}
+
+fn test_hardened_ranged_corrupted_blocks_assign() {
+	mut h := HardenedRangedInt{
+		val:       50
+		min:       0
+		max:       100
+		val_guard: ~i64(50)
+		min_guard: ~i64(0)
+		max_guard: ~i64(77)
+	}
+	mut failed := false
+	h.assign(60) or { failed = true }
+	assert failed
+}
+
+fn test_hardened_ranged_str() {
+	h := HardenedRangedInt.create(0, 100, 50) or { panic(err.str()) }
+	assert h.str() == '50 in [0..100] (hardened)'
+}
+
+fn test_hardened_ranged_str_corrupted() {
+	h := HardenedRangedInt{
+		val:       50
+		min:       0
+		max:       100
+		val_guard: i64(0)
+		min_guard: ~i64(0)
+		max_guard: ~i64(100)
+	}
+	assert h.str() == 'CORRUPTED'
+}
+
+fn test_safe_index_mask_valid_indices() {
+	assert safe_index_mask(0, 10) == 0
+	assert safe_index_mask(1, 10) == 1
+	assert safe_index_mask(5, 10) == 5
+	assert safe_index_mask(9, 10) == 9
+}
+
+fn test_safe_index_mask_at_boundary() {
+	assert safe_index_mask(10, 10) == 0
+	assert safe_index_mask(99, 100) == 99
+	assert safe_index_mask(100, 100) == 0
+}
+
+fn test_safe_index_mask_out_of_bounds() {
+	assert safe_index_mask(10, 5) == 0
+	assert safe_index_mask(100, 10) == 0
+	assert safe_index_mask(999, 10) == 0
+}
+
+fn test_safe_index_mask_negative() {
+	assert safe_index_mask(-1, 10) == 0
+	assert safe_index_mask(-100, 10) == 0
+	assert safe_index_mask(-999999, 10) == 0
+}
+
+fn test_safe_index_mask_zero_length() {
+	assert safe_index_mask(0, 0) == 0
+	assert safe_index_mask(5, 0) == 0
+}
+
+fn test_safe_index_mask_single_element() {
+	assert safe_index_mask(0, 1) == 0
+	assert safe_index_mask(1, 1) == 0
+	assert safe_index_mask(-1, 1) == 0
+}
+
+fn test_safe_index_mask_64_valid() {
+	assert safe_index_mask_64(0, 10) == 0
+	assert safe_index_mask_64(5, 10) == 5
+	assert safe_index_mask_64(9, 10) == 9
+}
+
+fn test_safe_index_mask_64_invalid() {
+	assert safe_index_mask_64(10, 10) == 0
+	assert safe_index_mask_64(100, 10) == 0
+	assert safe_index_mask_64(-1, 10) == 0
+}
+
+fn test_hardened_workflow() {
+	mut balance := HardenedRangedInt.create(0, 99999999, 100000) or { panic(err.str()) }
+	mut is_admin := new_hardened_bool(false)
+	mut tx_count := new_hardened_i64(0)
+	
+	balance = balance.checked_add(50000) or { panic(err.str()) }
+	tx_count = tx_count.checked_add(1) or { panic(err.str()) }
+	assert balance.value() or { panic(err.str()) } == 150000
+	assert tx_count.get() or { panic(err.str()) } == 1
+	
+	balance = balance.checked_sub(30000) or { panic(err.str()) }
+	tx_count = tx_count.checked_add(1) or { panic(err.str()) }
+	assert balance.value() or { panic(err.str()) } == 120000
+	assert tx_count.get() or { panic(err.str()) } == 2
+	
+	assert is_admin.get() or { panic(err.str()) } == false
+	is_admin.set(true)
+	assert is_admin.get() or { panic(err.str()) } == true
+	
+	assert is_admin.verify() == true
+	assert tx_count.verify() == true
+}

@@ -778,3 +778,358 @@ pub fn constant_time_eq(a []u8, b []u8) bool {
 pub fn constant_time_eq_strings(a string, b string) bool {
 	return constant_time_eq(a.bytes(), b.bytes())
 }
+
+
+const hardened_true_pattern = u64(0xAAAAAAAAAAAAAAAA)
+const hardened_false_pattern = u64(0x5555555555555555)
+
+@[packed; minify]
+pub struct HardenedI64 {
+mut:
+	val   i64
+	guard i64
+}
+
+@[inline; _hot]
+pub fn new_hardened_i64(v i64) HardenedI64 {
+	return HardenedI64{
+		val:   v
+		guard: ~v
+	}
+}
+
+@[inline; _hot]
+pub fn (h HardenedI64) get() !i64 {
+	if _unlikely_(h.val != ~h.guard) {
+		return error('Memory_Corruption: i64 bit-flip detected')
+	}
+	return h.val
+}
+
+@[inline; _hot]
+pub fn (mut h HardenedI64) set(v i64) {
+	h.val = v
+	h.guard = ~v
+}
+
+@[inline; _hot]
+pub fn (h HardenedI64) verify() bool {
+	return h.val == ~h.guard
+}
+
+@[inline; _hot]
+pub fn (h HardenedI64) checked_add(other i64) !HardenedI64 {
+	v := h.get()!
+	if _unlikely_((other > 0 && v > vanadium.max_i64_val - other)
+		|| (other < 0 && v < vanadium.min_i64_val - other)) {
+		return error('Overflow_Error: ${v} + ${other}')
+	}
+	return new_hardened_i64(v + other)
+}
+
+@[inline; _hot]
+pub fn (h HardenedI64) checked_sub(other i64) !HardenedI64 {
+	v := h.get()!
+	if _unlikely_((other > 0 && v < vanadium.min_i64_val + other)
+		|| (other < 0 && v > vanadium.max_i64_val + other)) {
+		return error('Overflow_Error: ${v} - ${other}')
+	}
+	return new_hardened_i64(v - other)
+}
+
+@[inline; _hot]
+pub fn (h HardenedI64) checked_mul(other i64) !HardenedI64 {
+	v := h.get()!
+	if v != 0 && other != 0 {
+		if _unlikely_((v > 0 && other > 0 && v > vanadium.max_i64_val / other)
+			|| (v < 0 && other < 0 && v < vanadium.max_i64_val / other)
+			|| (v > 0 && other < 0 && other < vanadium.min_i64_val / v)
+			|| (v < 0 && other > 0 && v < vanadium.min_i64_val / other)) {
+			return error('Overflow_Error: ${v} * ${other}')
+		}
+	}
+	return new_hardened_i64(v * other)
+}
+
+@[inline; _hot]
+pub fn (h HardenedI64) checked_div(other i64) !HardenedI64 {
+	v := h.get()!
+	if _unlikely_(other == 0) {
+		return error('Division_Error: division by zero')
+	}
+	if _unlikely_(v == vanadium.min_i64_val && other == -1) {
+		return error('Overflow_Error: ${v} / ${other}')
+	}
+	return new_hardened_i64(v / other)
+}
+
+@[inline; _hot]
+pub fn (h HardenedI64) str() string {
+	v := h.get() or { return 'CORRUPTED' }
+	return '${v} (hardened)'
+}
+
+@[packed; minify]
+pub struct HardenedBool {
+mut:
+	val   u64
+	guard u64
+}
+
+@[inline; _hot]
+pub fn new_hardened_bool(v bool) HardenedBool {
+	raw := if v { hardened_true_pattern } else { hardened_false_pattern }
+	return HardenedBool{
+		val:   raw
+		guard: ~raw
+	}
+}
+
+@[inline; _hot]
+pub fn (h HardenedBool) get() !bool {
+	if _unlikely_(h.val != ~h.guard) {
+		return error('Memory_Corruption: bool integrity failed')
+	}
+	if h.val == hardened_true_pattern {
+		return true
+	}
+	if h.val == hardened_false_pattern {
+		return false
+	}
+	return error('Memory_Corruption: bool in unknown state')
+}
+
+@[inline; _hot]
+pub fn (mut h HardenedBool) set(v bool) {
+	raw := if v { hardened_true_pattern } else { hardened_false_pattern }
+	h.val = raw
+	h.guard = ~raw
+}
+
+@[inline; _hot]
+pub fn (h HardenedBool) verify() bool {
+	if h.val != ~h.guard {
+		return false
+	}
+	return h.val == hardened_true_pattern || h.val == hardened_false_pattern
+}
+
+@[inline; _hot]
+pub fn (h HardenedBool) str() string {
+	v := h.get() or { return 'CORRUPTED' }
+	return '${v} (hardened)'
+}
+
+@[packed; minify]
+pub struct HardenedRangedInt {
+mut:
+	val       i64
+	min       i64
+	max       i64
+	val_guard i64
+	min_guard i64
+	max_guard i64
+}
+
+@[inline; _hot]
+fn (h HardenedRangedInt) integrity_check() ! {
+	if _unlikely_(h.val != ~h.val_guard) {
+		return error('Memory_Corruption: value bit-flip detected')
+	}
+	if _unlikely_(h.min != ~h.min_guard) {
+		return error('Memory_Corruption: min bound bit-flip detected')
+	}
+	if _unlikely_(h.max != ~h.max_guard) {
+		return error('Memory_Corruption: max bound bit-flip detected')
+	}
+}
+
+@[inline; _hot]
+pub fn HardenedRangedInt.create(min_v i64, max_v i64, initial i64) !HardenedRangedInt {
+	if _unlikely_(min_v > max_v) {
+		return error('Range_Error: min > max')
+	}
+	if _unlikely_(initial < min_v || initial > max_v) {
+		return error('Constraint_Error: ${initial} not in ${min_v}..${max_v}')
+	}
+	return HardenedRangedInt{
+		val:       initial
+		min:       min_v
+		max:       max_v
+		val_guard: ~initial
+		min_guard: ~min_v
+		max_guard: ~max_v
+	}
+}
+
+@[inline; _hot]
+pub fn (h HardenedRangedInt) value() !i64 {
+	h.integrity_check()!
+	return h.val
+}
+
+@[inline; _hot]
+pub fn (h HardenedRangedInt) min_val() !i64 {
+	h.integrity_check()!
+	return h.min
+}
+
+@[inline; _hot]
+pub fn (h HardenedRangedInt) max_val() !i64 {
+	h.integrity_check()!
+	return h.max
+}
+
+@[inline; _hot]
+pub fn (h HardenedRangedInt) in_range(v i64) !bool {
+	h.integrity_check()!
+	return v >= h.min && v <= h.max
+}
+
+@[inline; _hot]
+pub fn (mut h HardenedRangedInt) assign(v i64) ! {
+	h.integrity_check()!
+	if _unlikely_(v < h.min || v > h.max) {
+		return error('Constraint_Error: ${v} not in ${h.min}..${h.max}')
+	}
+	h.val = v
+	h.val_guard = ~v
+}
+
+@[inline; _hot]
+pub fn (h HardenedRangedInt) checked_add(other i64) !HardenedRangedInt {
+	h.integrity_check()!
+	if _unlikely_((other > 0 && h.val > vanadium.max_i64_val - other)
+		|| (other < 0 && h.val < vanadium.min_i64_val - other)) {
+		return error('Overflow_Error: ${h.val} + ${other}')
+	}
+	result := h.val + other
+	if _unlikely_(result < h.min || result > h.max) {
+		return error('Constraint_Error: ${h.val} + ${other} = ${result} not in ${h.min}..${h.max}')
+	}
+	return HardenedRangedInt{
+		val:       result
+		min:       h.min
+		max:       h.max
+		val_guard: ~result
+		min_guard: h.min_guard
+		max_guard: h.max_guard
+	}
+}
+
+@[inline; _hot]
+pub fn (h HardenedRangedInt) checked_sub(other i64) !HardenedRangedInt {
+	h.integrity_check()!
+	if _unlikely_((other > 0 && h.val < vanadium.min_i64_val + other)
+		|| (other < 0 && h.val > vanadium.max_i64_val + other)) {
+		return error('Overflow_Error: ${h.val} - ${other}')
+	}
+	result := h.val - other
+	if _unlikely_(result < h.min || result > h.max) {
+		return error('Constraint_Error: ${h.val} - ${other} = ${result} not in ${h.min}..${h.max}')
+	}
+	return HardenedRangedInt{
+		val:       result
+		min:       h.min
+		max:       h.max
+		val_guard: ~result
+		min_guard: h.min_guard
+		max_guard: h.max_guard
+	}
+}
+
+@[inline; _hot]
+pub fn (h HardenedRangedInt) checked_mul(other i64) !HardenedRangedInt {
+	h.integrity_check()!
+	if h.val != 0 && other != 0 {
+		if _unlikely_((h.val > 0 && other > 0 && h.val > vanadium.max_i64_val / other)
+			|| (h.val < 0 && other < 0 && h.val < vanadium.max_i64_val / other)
+			|| (h.val > 0 && other < 0 && other < vanadium.min_i64_val / h.val)
+			|| (h.val < 0 && other > 0 && h.val < vanadium.min_i64_val / other)) {
+			return error('Overflow_Error: ${h.val} * ${other}')
+		}
+	}
+	result := h.val * other
+	if _unlikely_(result < h.min || result > h.max) {
+		return error('Constraint_Error: ${h.val} * ${other} = ${result} not in ${h.min}..${h.max}')
+	}
+	return HardenedRangedInt{
+		val:       result
+		min:       h.min
+		max:       h.max
+		val_guard: ~result
+		min_guard: h.min_guard
+		max_guard: h.max_guard
+	}
+}
+
+@[inline; _hot]
+pub fn (h HardenedRangedInt) checked_div(other i64) !HardenedRangedInt {
+	h.integrity_check()!
+	if _unlikely_(other == 0) {
+		return error('Division_Error: division by zero')
+	}
+	if _unlikely_(h.val == vanadium.min_i64_val && other == -1) {
+		return error('Overflow_Error: ${h.val} / ${other}')
+	}
+	result := h.val / other
+	if _unlikely_(result < h.min || result > h.max) {
+		return error('Constraint_Error: ${h.val} / ${other} = ${result} not in ${h.min}..${h.max}')
+	}
+	return HardenedRangedInt{
+		val:       result
+		min:       h.min
+		max:       h.max
+		val_guard: ~result
+		min_guard: h.min_guard
+		max_guard: h.max_guard
+	}
+}
+
+@[inline; _hot]
+pub fn (h HardenedRangedInt) str() string {
+	h.integrity_check() or { return 'CORRUPTED' }
+	return '${h.val} in [${h.min}..${h.max}] (hardened)'
+}
+
+@[inline; _hot]
+pub fn safe_index_mask(index int, length int) int {
+	pos_mask := ~(index >> 31)
+	bound_mask := (index - length) >> 31
+	return index & (pos_mask & bound_mask)
+}
+
+@[inline; _hot]
+pub fn safe_index_mask_64(index i64, length i64) i64 {
+	pos_mask := ~(index >> 63)
+	bound_mask := (index - length) >> 63
+	return index & (pos_mask & bound_mask)
+}
+
+@[inline; _hot]
+pub fn simulate_corrupted_bool() HardenedBool {
+	return HardenedBool{
+		val:   hardened_true_pattern
+		guard: u64(0)
+	}
+}
+
+@[inline; _hot]
+pub fn simulate_corrupted_i64(fake_val i64, real_val i64) HardenedI64 {
+	return HardenedI64{
+		val:   fake_val
+		guard: ~real_val
+	}
+}
+
+@[inline; _hot]
+pub fn simulate_corrupted_ranged(fake_val i64, real_val i64, min_v i64, max_v i64) HardenedRangedInt {
+	return HardenedRangedInt{
+		val:       fake_val
+		min:       min_v
+		max:       max_v
+		val_guard: ~real_val
+		min_guard: ~min_v
+		max_guard: ~max_v
+	}
+}

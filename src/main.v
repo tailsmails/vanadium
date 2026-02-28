@@ -278,17 +278,20 @@ fn main() {
 	disc_c := vanadium.safe_mod_i64(loyalty_discount, 100) or { panic(err.str()) }
 	println('  Loyalty Disc:  -\$${disc_d}.${disc_c:02} (${alex.loyalty.value()} pts)')
 
-	println('  Checking Promo Code...')
-	mut is_promo_valid := false
-	vanadium.timed_call_ms(200, fn [mut is_promo_valid] () {
+		println('  Checking Promo Code...')
+	mut promo_state := map[string]bool{}
+	promo_state['valid'] = false
+	vanadium.timed_call_ms(200, fn [mut promo_state] () {
 		user_promo := 'BLACKFRIDAY'
 		db_promo := 'WINTERSALE2024'
-		is_promo_valid = vanadium.constant_time_eq_strings(user_promo, db_promo)
-		time.sleep(30 * time.millisecond) // searching time
+		promo_state['valid'] = vanadium.constant_time_eq_strings(user_promo, db_promo)
+		time.sleep(30 * time.millisecond)
 	}) or { panic(err.str()) }
-	
-	if !is_promo_valid {
+
+	if !promo_state['valid'] {
 		println('  [i] Promo code rejected (Time safely padded to 200ms)')
+	} else {
+		println('  [i] Promo code accepted!')
 	}
 
 	after_discount := vanadium.safe_sub_i64(order_subtotal.value(), loyalty_discount)!
@@ -432,4 +435,72 @@ fn main() {
 	print_separator()
 	println('  All operations completed safely!')
 	print_separator()
+	
+	print_header('HARDWARE ATTACK PROTECTION DEMO')
+	println('  [Anti-Rowhammer] Hardened Boolean (is_admin):')
+
+	mut is_admin_2 := vanadium.new_hardened_bool(false)
+	admin_check := is_admin_2.get() or { panic(err.str()) }
+	println('    is_admin = ${admin_check} (integrity: ${is_admin_2.verify()})')
+	
+	corrupted_admin := vanadium.simulate_corrupted_bool()
+	println('    Simulated Rowhammer attack on is_admin...')
+	if _ := corrupted_admin.get() {
+		println('    DANGER: corruption not detected!')
+	} else {
+		println('    [BLOCKED] Memory corruption detected! Access denied.')
+	}
+	
+	println('')
+	println('  [Anti-Rowhammer] Hardened Critical Balance:')
+
+	mut vault_balance := vanadium.HardenedRangedInt.create(0, 99999999, 5000000) or {
+		panic(err.str())
+	}
+	vb := vault_balance.value() or { panic(err.str()) }
+	vb_d := vanadium.safe_div_i64(vb, 100) or { panic(err.str()) }
+	vb_c := vanadium.safe_mod_i64(vb, 100) or { panic(err.str()) }
+	println('    Vault balance: \$${vb_d}.${vb_c:02} (integrity OK)')
+
+	vault_balance = vault_balance.checked_sub(1500000) or { panic(err.str()) }
+	vb2 := vault_balance.value() or { panic(err.str()) }
+	vb2_d := vanadium.safe_div_i64(vb2, 100) or { panic(err.str()) }
+	vb2_c := vanadium.safe_mod_i64(vb2, 100) or { panic(err.str()) }
+	println('    After withdrawal: \$${vb2_d}.${vb2_c:02} (integrity OK)')
+	
+	corrupted_balance := vanadium.simulate_corrupted_ranged(99000000, 5000000, 0, 99999999)
+	println('    Simulated Rowhammer on vault balance...')
+	if _ := corrupted_balance.value() {
+		println('    DANGER: corruption not detected!')
+	} else {
+		println('    [BLOCKED] Balance corruption detected! Transaction halted.')
+	}
+	
+	println('')
+	println('  [Anti-Rowhammer] Hardened Transaction Counter:')
+
+	mut h_counter := vanadium.new_hardened_i64(0)
+	h_counter = h_counter.checked_add(1) or { panic(err.str()) }
+	h_counter = h_counter.checked_add(1) or { panic(err.str()) }
+	h_counter = h_counter.checked_add(1) or { panic(err.str()) }
+	println('    Transactions processed: ${h_counter.get() or { panic(err.str()) }} (integrity: ${h_counter.verify()})')
+	
+	corrupted_counter := vanadium.simulate_corrupted_i64(0, 3)
+	println('    Simulated Rowhammer on counter...')
+	if _ := corrupted_counter.get() {
+		println('    DANGER: corruption not detected!')
+	} else {
+		println('    [BLOCKED] Counter corruption detected!')
+	}
+	
+	println('')
+	println('  [Anti-Spectre] Branchless Index Masking:')
+
+	test_indices := [0, 5, 9, 10, -1, 100]
+	array_len := 10
+	for idx in test_indices {
+		masked := vanadium.safe_index_mask(idx, array_len)
+		status := if idx >= 0 && idx < array_len { 'PASS' } else { 'MASKED->0' }
+		println('    index=${idx:4d}  masked=${masked}  [${status}]')
+	}
 }
