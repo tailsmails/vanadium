@@ -1,5 +1,6 @@
 module main
 
+import time
 import vanadium
 
 struct Product {
@@ -93,6 +94,29 @@ fn print_header(title string) {
 }
 
 fn main() {
+	print_header('ADMIN AUTHENTICATION (ANTI-TIMING ATTACK)')
+	
+	mut login_guard := vanadium.new_timing_guard_ms(500) or { panic(err.str()) }
+	
+	real_admin_token := 'secure_admin_hash_12345'
+	user_input := 'secure_admin_hash_99999'
+	
+	println('  Checking admin credentials...')
+	
+	is_admin := vanadium.constant_time_eq_strings(user_input, real_admin_token)
+	
+	time.sleep(120 * time.millisecond) // database checking time
+	
+	report := login_guard.pad_report()
+	
+	if is_admin {
+		println('  [✓] Login Successful')
+	} else {
+		println('  [✗] Login Failed (Invalid Token)')
+	}
+	println('  [i] Auth Timing: ${report}')
+
+
 	print_header('STORE MANAGEMENT SYSTEM')
 
 	mut store_name := vanadium.new_safe_var_init[string]('store_name', 'TechVault Electronics')
@@ -232,30 +256,6 @@ fn main() {
 	}) or { panic(err.str()) }
 	order_subtotal = order_subtotal.checked_add(ms_total)!
 
-	monitor := products.at(4) or { panic(err.str()) }
-	mn_qty := 1
-	mn_total := vanadium.safe_mul_i64(monitor.price, mn_qty)!
-
-	order_items.append(OrderItem{
-		product_name: monitor.name
-		quantity:     mn_qty
-		unit_price:   monitor.price
-		total:        mn_total
-	}) or { panic(err.str()) }
-	order_subtotal = order_subtotal.checked_add(mn_total)!
-
-	headphones := products.at(8) or { panic(err.str()) }
-	hp_qty := 1
-	hp_total := vanadium.safe_mul_i64(headphones.price, hp_qty)!
-
-	order_items.append(OrderItem{
-		product_name: headphones.name
-		quantity:     hp_qty
-		unit_price:   headphones.price
-		total:        hp_total
-	}) or { panic(err.str()) }
-	order_subtotal = order_subtotal.checked_add(hp_total)!
-
 	println('  Order Items:')
 	for i in 1 .. order_items.len() + 1 {
 		item := order_items.at(i) or { continue }
@@ -278,6 +278,19 @@ fn main() {
 	disc_c := vanadium.safe_mod_i64(loyalty_discount, 100) or { panic(err.str()) }
 	println('  Loyalty Disc:  -\$${disc_d}.${disc_c:02} (${alex.loyalty.value()} pts)')
 
+	println('  Checking Promo Code...')
+	mut is_promo_valid := false
+	vanadium.timed_call_ms(200, fn [mut is_promo_valid] () {
+		user_promo := 'BLACKFRIDAY'
+		db_promo := 'WINTERSALE2024'
+		is_promo_valid = vanadium.constant_time_eq_strings(user_promo, db_promo)
+		time.sleep(30 * time.millisecond) // searching time
+	}) or { panic(err.str()) }
+	
+	if !is_promo_valid {
+		println('  [i] Promo code rejected (Time safely padded to 200ms)')
+	}
+
 	after_discount := vanadium.safe_sub_i64(order_subtotal.value(), loyalty_discount)!
 	tax := calculate_tax(after_discount) or { panic(err.str()) }
 	tax_d := vanadium.safe_div_i64(tax, 100) or { panic(err.str()) }
@@ -289,13 +302,18 @@ fn main() {
 	gt_c := vanadium.safe_mod_i64(grand_total, 100) or { panic(err.str()) }
 	println('  Grand Total:   \$${gt_d}.${gt_c:02}')
 
-	print_header('PAYMENT PROCESSING')
+	print_header('PAYMENT PROCESSING (TIMING PROTECTED GATEWAY)')
+	
+	mut gateway_guard := vanadium.new_timing_guard_ms(800) or { panic(err.str()) }
+	
+	println('  Connecting to secure bank gateway...')
+	time.sleep(250 * time.millisecond) // pinging time
 
 	if alex.balance.value() >= grand_total {
 		alex.balance = alex.balance.checked_sub(grand_total) or { panic(err.str()) }
 		new_bal_d := vanadium.safe_div_i64(alex.balance.value(), 100) or { panic(err.str()) }
 		new_bal_c := vanadium.safe_mod_i64(alex.balance.value(), 100) or { panic(err.str()) }
-		println('  Payment successful!')
+		println('  [✓] Payment successful!')
 		println('  Charged: \$${gt_d}.${gt_c:02}')
 		println('  Remaining balance: \$${new_bal_d}.${new_bal_c:02}')
 
@@ -306,8 +324,11 @@ fn main() {
 		daily_revenue = daily_revenue.checked_add(grand_total) or { panic(err.str()) }
 		total_orders = total_orders.checked_add(1) or { panic(err.str()) }
 	} else {
-		println('  Payment FAILED: insufficient funds')
+		println('  [✗] Payment FAILED: insufficient funds')
 	}
+	
+	gateway_guard.pad()
+	println('  [i] Payment process completed securely in ${gateway_guard.target.milliseconds()}ms')
 
 	vanadium.ensure(alex.balance.value() >= 0, 'balance must never be negative') or {
 		panic(err.str())
@@ -327,120 +348,14 @@ fn main() {
 	println('  ${ms_product.name}: ${old_stock2} -> ${ms_product.stock.value()}')
 	products.set_at(2, ms_product) or { panic(err.str()) }
 
-	mut mn_product := products.at(4) or { panic(err.str()) }
-	old_stock3 := mn_product.stock.value()
-	mn_product.stock = mn_product.stock.checked_sub(mn_qty) or { panic(err.str()) }
-	println('  ${mn_product.name}: ${old_stock3} -> ${mn_product.stock.value()}')
-	products.set_at(4, mn_product) or { panic(err.str()) }
-
-	mut hp_product := products.at(8) or { panic(err.str()) }
-	old_stock4 := hp_product.stock.value()
-	hp_product.stock = hp_product.stock.checked_sub(hp_qty) or { panic(err.str()) }
-	println('  ${hp_product.name}: ${old_stock4} -> ${hp_product.stock.value()}')
-	products.set_at(8, hp_product) or { panic(err.str()) }
-
 	print_header('TRANSACTION HISTORY')
 
 	mut transactions := vanadium.new_safe_list[Transaction](1000) or { panic(err.str()) }
 
 	transactions.append(Transaction{
-		description: 'Order #1 - Alex Thompson (4 items)'
+		description: 'Order #1 - Alex Thompson (2 items)'
 		amount:      grand_total
 		balance:     alex.balance.value()
-	}) or { panic(err.str()) }
-
-	print_header('ORDER #2 - Maria Garcia')
-
-	mut maria := customers.at(2) or { panic(err.str()) }
-	mb_d := vanadium.safe_div_i64(maria.balance.value(), 100) or { panic(err.str()) }
-	mb_c := vanadium.safe_mod_i64(maria.balance.value(), 100) or { panic(err.str()) }
-	println('  Customer: ${maria.name}')
-	println('  Balance: \$${mb_d}.${mb_c:02}')
-
-	mut order2_items := vanadium.new_safe_list[OrderItem](20) or { panic(err.str()) }
-	mut order2_subtotal := vanadium.RangedInt.create(0, 99999999, 0) or { panic(err.str()) }
-
-	lamp := products.at(6) or { panic(err.str()) }
-	lm_qty := 2
-	lm_total := vanadium.safe_mul_i64(lamp.price, lm_qty)!
-
-	order2_items.append(OrderItem{
-		product_name: lamp.name
-		quantity:     lm_qty
-		unit_price:   lamp.price
-		total:        lm_total
-	}) or { panic(err.str()) }
-	order2_subtotal = order2_subtotal.checked_add(lm_total)!
-
-	stand := products.at(7) or { panic(err.str()) }
-	st_qty := 1
-	st_total := vanadium.safe_mul_i64(stand.price, st_qty)!
-
-	order2_items.append(OrderItem{
-		product_name: stand.name
-		quantity:     st_qty
-		unit_price:   stand.price
-		total:        st_total
-	}) or { panic(err.str()) }
-	order2_subtotal = order2_subtotal.checked_add(st_total)!
-
-	webcam := products.at(5) or { panic(err.str()) }
-	wc_qty := 1
-	wc_total := vanadium.safe_mul_i64(webcam.price, wc_qty)!
-
-	order2_items.append(OrderItem{
-		product_name: webcam.name
-		quantity:     wc_qty
-		unit_price:   webcam.price
-		total:        wc_total
-	}) or { panic(err.str()) }
-	order2_subtotal = order2_subtotal.checked_add(wc_total)!
-
-	println('')
-	println('  Order Items:')
-	for i in 1 .. order2_items.len() + 1 {
-		item := order2_items.at(i) or { continue }
-		up_d2 := vanadium.safe_div_i64(item.unit_price, 100) or { continue }
-		up_c2 := vanadium.safe_mod_i64(item.unit_price, 100) or { continue }
-		t_d2 := vanadium.safe_div_i64(item.total, 100) or { continue }
-		t_c2 := vanadium.safe_mod_i64(item.total, 100) or { continue }
-		println('    ${i}. ${item.product_name:-30s} x${item.quantity}  @\$${up_d2}.${up_c2:02}  = \$${t_d2}.${t_c2:02}')
-	}
-
-	o2_tax := calculate_tax(order2_subtotal.value()) or { panic(err.str()) }
-	o2_grand := vanadium.safe_add_i64(order2_subtotal.value(), o2_tax)!
-
-	o2s_d := vanadium.safe_div_i64(order2_subtotal.value(), 100) or { panic(err.str()) }
-	o2s_c := vanadium.safe_mod_i64(order2_subtotal.value(), 100) or { panic(err.str()) }
-	o2t_d := vanadium.safe_div_i64(o2_tax, 100) or { panic(err.str()) }
-	o2t_c := vanadium.safe_mod_i64(o2_tax, 100) or { panic(err.str()) }
-	o2g_d := vanadium.safe_div_i64(o2_grand, 100) or { panic(err.str()) }
-	o2g_c := vanadium.safe_mod_i64(o2_grand, 100) or { panic(err.str()) }
-
-	println('')
-	println('  Subtotal:    \$${o2s_d}.${o2s_c:02}')
-	println('  Tax (9%%):    \$${o2t_d}.${o2t_c:02}')
-	println('  Grand Total: \$${o2g_d}.${o2g_c:02}')
-
-	if maria.balance.value() >= o2_grand {
-		maria.balance = maria.balance.checked_sub(o2_grand) or { panic(err.str()) }
-		mnb_d := vanadium.safe_div_i64(maria.balance.value(), 100) or { panic(err.str()) }
-		mnb_c := vanadium.safe_mod_i64(maria.balance.value(), 100) or { panic(err.str()) }
-		println('  Payment successful! Remaining: \$${mnb_d}.${mnb_c:02}')
-
-		loyalty2 := vanadium.safe_div_i64(o2_grand, 100) or { panic(err.str()) }
-		maria.loyalty = maria.loyalty.checked_add(loyalty2) or { panic(err.str()) }
-		println('  Loyalty earned: +${loyalty2} pts')
-
-		daily_revenue = daily_revenue.checked_add(o2_grand) or { panic(err.str()) }
-		total_orders = total_orders.checked_add(1) or { panic(err.str()) }
-		customers.set_at(2, maria) or { panic(err.str()) }
-	}
-
-	transactions.append(Transaction{
-		description: 'Order #2 - Maria Garcia (3 items)'
-		amount:      o2_grand
-		balance:     maria.balance.value()
 	}) or { panic(err.str()) }
 
 	print_header('FAILED ORDER - Sophie Chen')
@@ -452,7 +367,7 @@ fn main() {
 	println('  Balance: \$${sb_d}.${sb_c:02}')
 	println('')
 
-	huge_order := vanadium.safe_mul_i64(monitor.price, 10)!
+	huge_order := vanadium.safe_mul_i64(p4.price, 10)!
 	ho_d := vanadium.safe_div_i64(huge_order, 100) or { panic(err.str()) }
 	ho_c := vanadium.safe_mod_i64(huge_order, 100) or { panic(err.str()) }
 	println('  Trying to buy 10x monitors = \$${ho_d}.${ho_c:02}')
@@ -478,30 +393,6 @@ fn main() {
 	println('  Abs(-999) = ${vanadium.safe_abs_i64(-999) or { panic(err.str()) }}')
 	println('  Negate(42) = ${vanadium.safe_negate_i64(42) or { panic(err.str()) }}')
 	println('  Clamp(150, 0, 100) = ${vanadium.clamp_i64(150, 0, 100)}')
-	println('  Clamp(-50, 0, 100) = ${vanadium.clamp_i64(-50, 0, 100)}')
-	println('  Clamp(75, 0, 100) = ${vanadium.clamp_i64(75, 0, 100)}')
-
-	println('')
-	println('  i32 safe: 2000000000 + 1000000000')
-	if _ := vanadium.safe_add_i32(2000000000, 1000000000) {
-		println('  ERROR: should overflow')
-	} else {
-		println('  Correctly caught i32 overflow')
-	}
-
-	println('  i64 safe: max_i64 + 1')
-	if _ := vanadium.safe_add_i64(vanadium.max_i64_val, 1) {
-		println('  ERROR: should overflow')
-	} else {
-		println('  Correctly caught i64 overflow')
-	}
-
-	println('  Division by zero:')
-	if _ := vanadium.safe_div_i64(100, 0) {
-		println('  ERROR: should fail')
-	} else {
-		println('  Correctly caught division by zero')
-	}
 
 	print_header('CONTRACT VERIFICATION')
 
@@ -528,25 +419,6 @@ fn main() {
 		'daily sales limit invariant') or { panic(err.str()) }
 	println('  All invariants hold')
 
-	vanadium.safe_assert(transactions.len() == 2, 'transaction_count', 'expected 2 transactions') or {
-		panic(err.str())
-	}
-	println('  All assertions passed')
-
-	print_header('FROZEN VARIABLE PROTECTION')
-
-	if _ := store_name.set('New Name') {
-		println('  ERROR: should be frozen')
-	} else {
-		println('  store_name is frozen, cannot modify')
-	}
-
-	if _ := max_daily_sales.set(999) {
-		println('  ERROR: should be frozen')
-	} else {
-		println('  max_daily_sales is frozen, cannot modify')
-	}
-
 	print_header('DAILY SUMMARY')
 
 	rev_d := vanadium.safe_div_i64(daily_revenue.value(), 100) or { panic(err.str()) }
@@ -556,39 +428,6 @@ fn main() {
 	println('  Transactions:  ${transactions.len()}')
 	println('  Products:      ${products.len()}')
 	println('  Customers:     ${customers.len()}')
-
-	println('')
-	println('  Transaction Log:')
-	for i in 1 .. transactions.len() + 1 {
-		t := transactions.at(i) or { continue }
-		ta_d := vanadium.safe_div_i64(t.amount, 100) or { continue }
-		ta_c := vanadium.safe_mod_i64(t.amount, 100) or { continue }
-		println('    ${i}. ${t.description} | Amount: \$${ta_d}.${ta_c:02}')
-	}
-
-	println('')
-	println('  Updated Stock:')
-	for i in 1 .. products.len() + 1 {
-		mut p := products.at(i) or { continue }
-		println('    ${p.name:-30s} Stock: ${p.stock.value()}')
-	}
-
-	println('')
-	println('  Customer Balances:')
-	customers.set_at(1, alex) or { panic(err.str()) }
-	for i in 1 .. customers.len() + 1 {
-		mut c := customers.at(i) or { continue }
-		cb_d := vanadium.safe_div_i64(c.balance.value(), 100) or { continue }
-		cb_c := vanadium.safe_mod_i64(c.balance.value(), 100) or { continue }
-		println('    ${c.name:-20s} Balance: \$${cb_d}.${cb_c:02} | Loyalty: ${c.loyalty.value()} pts')
-	}
-
-	vanadium.ensure(daily_revenue.value() > 0, 'should have made sales today') or {
-		panic(err.str())
-	}
-	vanadium.ensure(total_orders.value() == 2, 'should have exactly 2 orders') or {
-		panic(err.str())
-	}
 
 	print_separator()
 	println('  All operations completed safely!')

@@ -1,5 +1,7 @@
 module vanadium
 
+import time
+
 fn test_ranged_create_valid() {
 	r := RangedInt.create(1, 12, 6) or { panic(err.str()) }
 	assert r.value() == 6
@@ -39,12 +41,15 @@ fn test_ranged_assign_valid() {
 
 fn test_ranged_assign_invalid() {
 	mut r := RangedInt.create(1, 12, 6) or { panic(err.str()) }
-	if _ := r.assign(13) {
-		assert false
-	}
-	if _ := r.assign(0) {
-		assert false
-	}
+	
+	mut err1 := false
+	r.assign(13) or { err1 = true }
+	assert err1
+	
+	mut err2 := false
+	r.assign(0) or { err2 = true }
+	assert err2
+	
 	assert r.value() == 6
 }
 
@@ -155,9 +160,9 @@ fn test_safelist_append_overflow() {
 	mut s := new_safe_list[int](2) or { panic(err.str()) }
 	s.append(1) or { panic(err.str()) }
 	s.append(2) or { panic(err.str()) }
-	if _ := s.append(3) {
-		assert false
-	}
+	mut failed := false
+	s.append(3) or { failed = true }
+	assert failed
 }
 
 fn test_safelist_at_out_of_bounds() {
@@ -194,9 +199,9 @@ fn test_safelist_set_at() {
 fn test_safelist_set_at_invalid() {
 	mut s := new_safe_list[int](3) or { panic(err.str()) }
 	s.append(10) or { panic(err.str()) }
-	if _ := s.set_at(5, 99) {
-		assert false
-	}
+	mut failed := false
+	s.set_at(5, 99) or { failed = true }
+	assert failed
 }
 
 fn test_safelist_remove_at() {
@@ -250,9 +255,11 @@ fn test_safelist_append_many() {
 	mut s := new_safe_list[int](5) or { panic(err.str()) }
 	s.append_many([1, 2, 3]) or { panic(err.str()) }
 	assert s.len() == 3
-	if _ := s.append_many([4, 5, 6]) {
-		assert false
-	}
+	
+	mut failed := false
+	s.append_many([4, 5, 6]) or { failed = true }
+	assert failed
+	
 	s.append_many([4, 5]) or { panic(err.str()) }
 	assert s.len() == 5
 	assert s.is_full() == true
@@ -279,8 +286,12 @@ fn test_safelist_find() {
 	s.append(10) or { panic(err.str()) }
 	s.append(20) or { panic(err.str()) }
 	s.append(30) or { panic(err.str()) }
-	assert s.find(20) or { -1 } == 2
-	assert s.find(99) == none
+	
+	idx := s.find(20) or { -1 }
+	assert idx == 2
+	
+	idx_none := s.find(99) or { -1 }
+	assert idx_none == -1
 }
 
 fn test_safelist_contains() {
@@ -377,17 +388,19 @@ fn test_safevar_freeze() {
 	mut v := new_safe_var_init[int]('const_val', 100)
 	v.freeze() or { panic(err.str()) }
 	assert v.is_frozen() == true
-	if _ := v.set(200) {
-		assert false
-	}
+	
+	mut failed := false
+	v.set(200) or { failed = true }
+	assert failed
+	
 	assert v.get() or { panic(err.str()) } == 100
 }
 
 fn test_safevar_freeze_uninitialized() {
 	mut v := new_safe_var[int]('x')
-	if _ := v.freeze() {
-		assert false
-	}
+	mut failed := false
+	v.freeze() or { failed = true }
+	assert failed
 }
 
 fn test_validated_var() {
@@ -396,12 +409,15 @@ fn test_validated_var() {
 	}, 'must be 0..150')
 	age.set(25) or { panic(err.str()) }
 	assert age.get() or { panic(err.str()) } == 25
-	if _ := age.set(-1) {
-		assert false
-	}
-	if _ := age.set(200) {
-		assert false
-	}
+	
+	mut err1 := false
+	age.set(-1) or { err1 = true }
+	assert err1
+	
+	mut err2 := false
+	age.set(200) or { err2 = true }
+	assert err2
+	
 	assert age.get() or { panic(err.str()) } == 25
 }
 
@@ -416,37 +432,37 @@ fn test_validated_var_uninitialized() {
 
 fn test_require() {
 	require(true, 'ok') or { panic(err.str()) }
-	if _ := require(false, 'should fail') {
-		assert false
-	}
+	mut failed := false
+	require(false, 'should fail') or { failed = true }
+	assert failed
 }
 
 fn test_ensure() {
 	ensure(true, 'ok') or { panic(err.str()) }
-	if _ := ensure(false, 'should fail') {
-		assert false
-	}
+	mut failed := false
+	ensure(false, 'should fail') or { failed = true }
+	assert failed
 }
 
 fn test_check_invariant() {
 	check_invariant(true, 'ok') or { panic(err.str()) }
-	if _ := check_invariant(false, 'broken') {
-		assert false
-	}
+	mut failed := false
+	check_invariant(false, 'broken') or { failed = true }
+	assert failed
 }
 
 fn test_require_all() {
 	require_all([true, true, true], ['a', 'b', 'c']) or { panic(err.str()) }
-	if _ := require_all([true, false, true], ['a', 'b', 'c']) {
-		assert false
-	}
+	mut failed := false
+	require_all([true, false, true], ['a', 'b', 'c']) or { failed = true }
+	assert failed
 }
 
 fn test_safe_assert() {
 	safe_assert(true, 'test', 'ok') or { panic(err.str()) }
-	if _ := safe_assert(false, 'test', 'fail') {
-		assert false
-	}
+	mut failed := false
+	safe_assert(false, 'test', 'fail') or { failed = true }
+	assert failed
 }
 
 fn test_safe_add_i64() {
@@ -580,4 +596,363 @@ fn test_full_workflow() {
 	assert history.len() == 2
 	assert history.at(1) or { panic(err.str()) } == 'deposit 1500'
 	assert history.at(2) or { panic(err.str()) } == 'withdraw 2000'
+}
+
+fn test_timing_guard_create_valid() {
+	_ := new_timing_guard_ms(100) or { panic(err.str()) }
+	_ := new_timing_guard_s(1) or { panic(err.str()) }
+	_ := new_timing_guard_us(500) or { panic(err.str()) }
+	_ := new_timing_guard_ns(1000000) or { panic(err.str()) }
+	_ := new_timing_guard(50 * time.millisecond) or { panic(err.str()) }
+}
+
+fn test_timing_guard_create_invalid() {
+	if _ := new_timing_guard(0) {
+		assert false
+	}
+	if _ := new_timing_guard(-1 * time.millisecond) {
+		assert false
+	}
+	if _ := new_timing_guard_ms(0) {
+		assert false
+	}
+	if _ := new_timing_guard_s(0) {
+		assert false
+	}
+	if _ := new_timing_guard_us(0) {
+		assert false
+	}
+	if _ := new_timing_guard_ns(0) {
+		assert false
+	}
+}
+
+fn test_timing_guard_pad_basic() {
+	sw := time.new_stopwatch()
+	mut guard := new_timing_guard_ms(300) or { panic(err.str()) }
+	time.sleep(50 * time.millisecond)
+	guard.pad()
+	elapsed := sw.elapsed()
+	assert elapsed >= 280 * time.millisecond
+	assert elapsed < 500 * time.millisecond
+}
+
+fn test_timing_guard_pad_no_sleep_needed() {
+	mut guard := new_timing_guard_ms(50) or { panic(err.str()) }
+	time.sleep(100 * time.millisecond)
+	sw := time.new_stopwatch()
+	guard.pad()
+	pad_time := sw.elapsed()
+	assert pad_time < 30 * time.millisecond
+}
+
+fn test_timing_guard_pad_report_padded() {
+	mut guard := new_timing_guard_ms(300) or { panic(err.str()) }
+	time.sleep(50 * time.millisecond)
+	report := guard.pad_report()
+	assert report.was_padded == true
+	assert report.exceeded == false
+	assert report.exec_elapsed > 40 * time.millisecond
+	assert report.exec_elapsed < 200 * time.millisecond
+	assert report.padded > 0
+	assert report.total == 300 * time.millisecond
+}
+
+fn test_timing_guard_pad_report_exceeded() {
+	mut guard := new_timing_guard_ms(50) or { panic(err.str()) }
+	time.sleep(120 * time.millisecond)
+	report := guard.pad_report()
+	assert report.was_padded == false
+	assert report.exceeded == true
+	assert report.exec_elapsed >= 100 * time.millisecond
+	assert report.padded == time.Duration(0)
+	assert report.total == report.exec_elapsed
+}
+
+fn test_timing_guard_elapsed() {
+	mut guard := new_timing_guard_ms(500) or { panic(err.str()) }
+	time.sleep(80 * time.millisecond)
+	e := guard.elapsed()
+	assert e >= 60 * time.millisecond
+	assert e < 300 * time.millisecond
+}
+
+fn test_timing_guard_remaining() {
+	mut guard := new_timing_guard_ms(500) or { panic(err.str()) }
+	time.sleep(80 * time.millisecond)
+	r := guard.remaining()
+	assert r > 0
+	assert r < 500 * time.millisecond
+}
+
+fn test_timing_guard_remaining_zero_when_exceeded() {
+	mut guard := new_timing_guard_ms(50) or { panic(err.str()) }
+	time.sleep(120 * time.millisecond)
+	assert guard.remaining() == time.Duration(0)
+}
+
+fn test_timing_guard_restart() {
+	mut guard := new_timing_guard_ms(500) or { panic(err.str()) }
+	time.sleep(100 * time.millisecond)
+	guard.restart()
+	r := guard.remaining()
+	assert r > 450 * time.millisecond
+}
+
+fn test_timing_guard_multiple_restarts() {
+	mut guard := new_timing_guard_ms(200) or { panic(err.str()) }
+	sw := time.new_stopwatch()
+	time.sleep(50 * time.millisecond)
+	guard.restart()
+	time.sleep(50 * time.millisecond)
+	guard.pad()
+	total := sw.elapsed()
+	assert total >= 240 * time.millisecond
+}
+
+fn test_timing_report_str_padded() {
+	report := TimingReport{
+		exec_elapsed: 100 * time.millisecond
+		padded:       200 * time.millisecond
+		total:        300 * time.millisecond
+		was_padded:   true
+		exceeded:     false
+	}
+	s := report.str()
+	assert s.contains('PADDED')
+	assert s.contains('TimingReport')
+}
+
+fn test_timing_report_str_exceeded() {
+	report := TimingReport{
+		exec_elapsed: 500 * time.millisecond
+		padded:       time.Duration(0)
+		total:        500 * time.millisecond
+		was_padded:   false
+		exceeded:     true
+	}
+	s := report.str()
+	assert s.contains('EXCEEDED')
+}
+
+fn test_timing_report_str_exact() {
+	report := TimingReport{
+		exec_elapsed: 300 * time.millisecond
+		padded:       time.Duration(0)
+		total:        300 * time.millisecond
+		was_padded:   false
+		exceeded:     false
+	}
+	s := report.str()
+	assert s.contains('EXACT')
+}
+
+fn test_timed_call_pads_correctly() {
+	sw := time.new_stopwatch()
+	timed_call_ms(300, fn () {
+		time.sleep(50 * time.millisecond)
+	}) or { panic(err.str()) }
+	elapsed := sw.elapsed()
+	assert elapsed >= 280 * time.millisecond
+	assert elapsed < 500 * time.millisecond
+}
+
+fn test_timed_call_no_pad_when_exceeded() {
+	sw := time.new_stopwatch()
+	timed_call_ms(50, fn () {
+		time.sleep(120 * time.millisecond)
+	}) or { panic(err.str()) }
+	elapsed := sw.elapsed()
+	assert elapsed >= 100 * time.millisecond
+	assert elapsed < 300 * time.millisecond
+}
+
+fn test_timed_call_s() {
+	sw := time.new_stopwatch()
+	timed_call_s(1, fn () {
+		time.sleep(50 * time.millisecond)
+	}) or { panic(err.str()) }
+	elapsed := sw.elapsed()
+	assert elapsed >= 950 * time.millisecond
+	assert elapsed < 1500 * time.millisecond
+}
+
+fn test_timed_call_invalid_duration() {
+	mut err1 := false
+	timed_call_ms(0, fn () {}) or { err1 = true }
+	assert err1
+	
+	mut err2 := false
+	timed_call(time.Duration(0), fn () {}) or { err2 = true }
+	assert err2
+	
+	mut err3 := false
+	timed_call(-1 * time.millisecond, fn () {}) or { err3 = true }
+	assert err3
+}
+
+fn test_timed_call_report_padded() {
+	report := timed_call_report(300 * time.millisecond, fn () {
+		time.sleep(50 * time.millisecond)
+	}) or { panic(err.str()) }
+	assert report.was_padded == true
+	assert report.exceeded == false
+	assert report.exec_elapsed > 40 * time.millisecond
+	assert report.padded > 0
+	assert report.total == 300 * time.millisecond
+}
+
+fn test_timed_call_report_exceeded() {
+	report := timed_call_report(50 * time.millisecond, fn () {
+		time.sleep(120 * time.millisecond)
+	}) or { panic(err.str()) }
+	assert report.was_padded == false
+	assert report.exceeded == true
+	assert report.exec_elapsed >= 100 * time.millisecond
+}
+
+fn test_timed_call_report_invalid() {
+	if _ := timed_call_report(time.Duration(0), fn () {}) {
+		assert false
+	}
+	if _ := timed_call_report(-5 * time.millisecond, fn () {}) {
+		assert false
+	}
+}
+
+fn test_constant_time_eq_identical() {
+	assert constant_time_eq([u8(1), 2, 3, 4, 5], [u8(1), 2, 3, 4, 5]) == true
+}
+
+fn test_constant_time_eq_different() {
+	assert constant_time_eq([u8(1), 2, 3, 4, 5], [u8(1), 2, 3, 4, 6]) == false
+}
+
+fn test_constant_time_eq_first_byte_diff() {
+	assert constant_time_eq([u8(0), 2, 3, 4, 5], [u8(1), 2, 3, 4, 5]) == false
+}
+
+fn test_constant_time_eq_different_lengths() {
+	assert constant_time_eq([u8(1), 2, 3], [u8(1), 2, 3, 4]) == false
+	assert constant_time_eq([u8(1), 2, 3, 4], [u8(1), 2, 3]) == false
+}
+
+fn test_constant_time_eq_empty() {
+	assert constant_time_eq([]u8{}, []u8{}) == true
+}
+
+fn test_constant_time_eq_single_byte() {
+	assert constant_time_eq([u8(42)], [u8(42)]) == true
+	assert constant_time_eq([u8(42)], [u8(43)]) == false
+}
+
+fn test_constant_time_eq_strings_identical() {
+	assert constant_time_eq_strings('hello_world', 'hello_world') == true
+}
+
+fn test_constant_time_eq_strings_different() {
+	assert constant_time_eq_strings('hello', 'world') == false
+}
+
+fn test_constant_time_eq_strings_different_lengths() {
+	assert constant_time_eq_strings('hello', 'hell') == false
+	assert constant_time_eq_strings('hi', 'hello') == false
+}
+
+fn test_constant_time_eq_strings_empty() {
+	assert constant_time_eq_strings('', '') == true
+}
+
+fn test_constant_time_eq_strings_similar() {
+	assert constant_time_eq_strings('password1', 'password2') == false
+	assert constant_time_eq_strings('abc', 'abd') == false
+}
+
+fn test_constant_time_eq_strings_case_sensitive() {
+	assert constant_time_eq_strings('Hello', 'hello') == false
+	assert constant_time_eq_strings('ABC', 'abc') == false
+}
+
+fn test_constant_time_eq_timing_consistency() {
+	token := 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6'.bytes()
+
+	wrong_first := 'X1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6'.bytes()
+	wrong_last := 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5pX'.bytes()
+
+	mut times_first := []i64{cap: 1000}
+	mut times_last := []i64{cap: 1000}
+
+	for _ in 0 .. 1000 {
+		sw1 := time.new_stopwatch()
+		_ := constant_time_eq(token, wrong_first)
+		times_first << i64(sw1.elapsed())
+
+		sw2 := time.new_stopwatch()
+		_ := constant_time_eq(token, wrong_last)
+		times_last << i64(sw2.elapsed())
+	}
+
+	mut avg_first := i64(0)
+	mut avg_last := i64(0)
+	for t in times_first {
+		avg_first += t
+	}
+	for t in times_last {
+		avg_last += t
+	}
+	avg_first /= 1000
+	avg_last /= 1000
+
+	diff := if avg_first > avg_last { avg_first - avg_last } else { avg_last - avg_first }
+	max_acceptable := if avg_first > avg_last { avg_first } else { avg_last }
+	assert diff < max_acceptable
+}
+
+fn test_timing_guard_password_check_simulation() {
+	target := 200 * time.millisecond
+	real_token := 'secure_token_12345'
+
+	check_token := fn [real_token, target] (input string) bool {
+		mut guard := new_timing_guard(target) or { return false }
+		result := constant_time_eq_strings(input, real_token)
+		guard.pad()
+		return result
+	}
+
+	sw1 := time.new_stopwatch()
+	r1 := check_token('x')
+	t1 := sw1.elapsed()
+	assert r1 == false
+	assert t1 >= 180 * time.millisecond
+
+	sw2 := time.new_stopwatch()
+	r2 := check_token('secure_token_1234X')
+	t2 := sw2.elapsed()
+	assert r2 == false
+	assert t2 >= 180 * time.millisecond
+
+	sw3 := time.new_stopwatch()
+	r3 := check_token('secure_token_12345')
+	t3 := sw3.elapsed()
+	assert r3 == true
+	assert t3 >= 180 * time.millisecond
+
+	diff_12 := if t1 > t2 { t1 - t2 } else { t2 - t1 }
+	diff_13 := if t1 > t3 { t1 - t3 } else { t3 - t1 }
+	assert diff_12 < 100 * time.millisecond
+	assert diff_13 < 100 * time.millisecond
+}
+
+fn test_timed_call_with_result_workflow() {
+	mut state := map[string]bool{}
+	state['done'] = false
+
+	report := timed_call_report(250 * time.millisecond, fn [mut state] () {
+		time.sleep(30 * time.millisecond)
+		state['done'] = true
+	}) or { panic(err.str()) }
+
+	assert state['done'] == true
+	assert report.was_padded == true
+	assert report.total == 250 * time.millisecond
 }

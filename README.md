@@ -301,11 +301,74 @@ absence at compile time. For most applications, runtime checking
 is sufficient. For avionics, medical devices, or nuclear systems,
 use Ada/SPARK.
 
+---
+
+## Timing Attack Protection
+
+Timing attacks exploit variations in execution time to guess sensitive data (e.g., passwords or tokens). The `vanadium` module provides utilities to enforce constant execution times and secure string comparisons to neutralize these vulnerabilities.
+
+---
+
+### Constant-Time Comparisons
+Standard string comparisons exit early on mismatches, leaking timing data. Use `constant_time_eq_strings` to safely compare cryptographic tokens or hashes by checking every byte regardless of where a mismatch occurs.
+
+```v
+import vanadium
+
+fn verify_token(user_input string, real_token string) bool {
+    // SECURE: Always takes the exact same amount of time
+    return vanadium.constant_time_eq_strings(user_input, real_token)
+}
+```
+
+---
+
+### Constant Execution Time
+When handling authentication or payments, the total response time should remain identical whether the internal operation succeeds or fails. You can enforce a fixed execution duration using `TimingGuard`.
+
+```v
+// 1. Enforce an exact 500ms execution time
+mut guard := vanadium.new_timing_guard_ms(500)!
+
+// 2. Perform sensitive operations (e.g., takes 120ms)
+is_valid := check_database(credentials)
+
+// 3. Automatically sleeps for the remaining time (e.g., 380ms)
+guard.pad()
+```
+
+Alternatively, use the functional `timed_call` approach:
+
+```v
+vanadium.timed_call_ms(500, fn () {
+    // Sensitive logic here
+})!
+```
+
+---
+
+### Timing Reports
+To audit your execution times and ensure your target duration is long enough, use `.pad_report()` instead of `.pad()`.
+
+```v
+mut guard := vanadium.new_timing_guard_ms(500)!
+do_heavy_crypto()
+
+report := guard.pad_report()
+println(report)
+// TimingReport{ exec: 120.00ms, pad: 380.00ms, total: 500.00ms, status: PADDED }
+```
+*(If the execution takes longer than 500ms, the report will flag `exceeded: true` without padding).*
+
+---
+
 ## Run tests
 
 ```
 v test vanadium/
 ```
+
+---
 
 ## License
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)

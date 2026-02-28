@@ -1,6 +1,7 @@
 module vanadium
 
 import sync
+import time
 
 pub const max_i64_val = i64(9223372036854775807)
 pub const min_i64_val = i64(-9223372036854775807 - 1)
@@ -593,4 +594,187 @@ pub fn clamp_i64(val i64, min_v i64, max_v i64) i64 {
 		return max_v
 	}
 	return val
+}
+
+@[packed; minify]
+pub struct TimingGuard {
+pub:
+	target time.Duration
+mut:
+	sw time.StopWatch
+}
+
+@[packed; minify]
+pub struct TimingReport {
+pub:
+	exec_elapsed time.Duration
+	padded       time.Duration
+	total        time.Duration
+	was_padded   bool
+	exceeded     bool
+}
+
+@[inline; _hot]
+pub fn new_timing_guard(target time.Duration) !TimingGuard {
+	if _unlikely_(target <= 0) {
+		return error('Timing_Error: target duration must be > 0')
+	}
+	return TimingGuard{
+		target: target
+		sw: time.new_stopwatch()
+	}
+}
+
+@[inline; _hot]
+pub fn new_timing_guard_ns(ns i64) !TimingGuard {
+	return new_timing_guard(ns * time.nanosecond)
+}
+
+@[inline; _hot]
+pub fn new_timing_guard_us(us i64) !TimingGuard {
+	return new_timing_guard(us * time.microsecond)
+}
+
+@[inline; _hot]
+pub fn new_timing_guard_ms(ms i64) !TimingGuard {
+	return new_timing_guard(ms * time.millisecond)
+}
+
+@[inline; _hot]
+pub fn new_timing_guard_s(s i64) !TimingGuard {
+	return new_timing_guard(s * time.second)
+}
+
+@[inline; _hot]
+pub fn (mut tg TimingGuard) pad() {
+	elapsed := tg.sw.elapsed()
+	remaining := tg.target - elapsed
+	if remaining > 0 {
+		time.sleep(remaining)
+	}
+}
+
+@[inline; _hot]
+pub fn (mut tg TimingGuard) pad_report() TimingReport {
+	elapsed := tg.sw.elapsed()
+	remaining := tg.target - elapsed
+	if remaining > 0 {
+		time.sleep(remaining)
+		return TimingReport{
+			exec_elapsed: elapsed
+			padded:       remaining
+			total:        tg.target
+			was_padded:   true
+			exceeded:     false
+		}
+	}
+	return TimingReport{
+		exec_elapsed: elapsed
+		padded:       time.Duration(0)
+		total:        elapsed
+		was_padded:   false
+		exceeded:     elapsed > tg.target
+	}
+}
+
+@[inline; _hot]
+pub fn (mut tg TimingGuard) elapsed() time.Duration {
+	return tg.sw.elapsed()
+}
+
+@[inline; _hot]
+pub fn (mut tg TimingGuard) remaining() time.Duration {
+	r := tg.target - tg.sw.elapsed()
+	if r < 0 {
+		return time.Duration(0)
+	}
+	return r
+}
+
+@[inline; _hot]
+pub fn (mut tg TimingGuard) restart() {
+	tg.sw.restart()
+}
+
+@[inline; _hot]
+pub fn (r TimingReport) str() string {
+	exec_ms := f64(r.exec_elapsed) / f64(time.millisecond)
+	pad_ms := f64(r.padded) / f64(time.millisecond)
+	total_ms := f64(r.total) / f64(time.millisecond)
+	status := if r.exceeded {
+		'EXCEEDED'
+	} else if r.was_padded {
+		'PADDED'
+	} else {
+		'EXACT'
+	}
+	return 'TimingReport{ exec: ${exec_ms:.2}ms, pad: ${pad_ms:.2}ms, total: ${total_ms:.2}ms, status: ${status} }'
+}
+
+@[inline; _hot]
+pub fn timed_call(target time.Duration, callback fn ()) ! {
+	if _unlikely_(target <= 0) {
+		return error('Timing_Error: target duration must be > 0')
+	}
+	sw := time.new_stopwatch()
+	callback()
+	remaining := target - sw.elapsed()
+	if remaining > 0 {
+		time.sleep(remaining)
+	}
+}
+
+@[inline; _hot]
+pub fn timed_call_ms(ms i64, callback fn ()) ! {
+	timed_call(ms * time.millisecond, callback)!
+}
+
+@[inline; _hot]
+pub fn timed_call_s(s i64, callback fn ()) ! {
+	timed_call(s * time.second, callback)!
+}
+
+@[inline; _hot]
+pub fn timed_call_report(target time.Duration, callback fn ()) !TimingReport {
+	if _unlikely_(target <= 0) {
+		return error('Timing_Error: target duration must be > 0')
+	}
+	sw := time.new_stopwatch()
+	callback()
+	elapsed := sw.elapsed()
+	remaining := target - elapsed
+	if remaining > 0 {
+		time.sleep(remaining)
+		return TimingReport{
+			exec_elapsed: elapsed
+			padded:       remaining
+			total:        target
+			was_padded:   true
+			exceeded:     false
+		}
+	}
+	return TimingReport{
+		exec_elapsed: elapsed
+		padded:       time.Duration(0)
+		total:        elapsed
+		was_padded:   false
+		exceeded:     elapsed > target
+	}
+}
+
+@[inline; _hot]
+pub fn constant_time_eq(a []u8, b []u8) bool {
+	if a.len != b.len {
+		return false
+	}
+	mut diff := u8(0)
+	for i in 0 .. a.len {
+		diff |= a[i] ^ b[i]
+	}
+	return diff == 0
+}
+
+@[inline; _hot]
+pub fn constant_time_eq_strings(a string, b string) bool {
+	return constant_time_eq(a.bytes(), b.bytes())
 }
