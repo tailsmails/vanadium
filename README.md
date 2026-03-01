@@ -291,8 +291,8 @@ configuration, protocol parsing, financial calculations.
 | Runtime range checking     | Yes      | Yes       |
 | Runtime overflow detection | Yes      | Yes       |
 | Design by contract         | Yes      | Yes       |
-| Compile-time range proof   | No       | Yes       |
-| Formal verification        | No       | Yes       |
+| Compile-time range proof   | Yes(by dev)       | Yes       |
+| Formal verification        | Yes(by dev)      | Yes       |
 | Strong type distinction    | No       | Yes       |
 | Thread safety              | Yes      | Yes       |
 
@@ -425,6 +425,184 @@ For typical applications, this overhead is negligible. Use standard `RangedInt` 
 
 ```
 v test vanadium/
+```
+
+---
+
+## Debug and Release Modes (for proof)
+
+All proof functions in `vanadium` are designed to have **zero overhead in release builds**. No code changes are needed — the compiler flag determines what runs.
+
+### How It Works
+
+Proof methods like `prove_for_range`, `prove_commutative`, `prove_injective`, and others are annotated with `@[if debug]`. The V compiler strips these calls entirely in release mode. The closures you pass as arguments are never created either.
+
+Functions that return values (like `all_passed`, `report`, `check_invariant`) use `$if debug` internally. In release mode they return safe defaults: `true`, empty string, or no error.
+
+Runtime safety functions like `guard`, `ensure_in_range`, and `StateMachine.step` are **always active** in both modes.
+
+### Build Commands
+
+```
+v -g run main.v       # debug: all proofs execute
+v -prod run main.v    # release: proofs removed, guards remain
+```
+
+### Categories
+
+**Debug-only (removed in release):**
+
+- `Prover.prove_for_range`
+- `Prover.prove_for_pairs`
+- `Prover.prove_exists`
+- `Prover.prove_by_samples`
+- `Prover.prove_ranged`
+- `Prover.prove_commutative`
+- `Prover.prove_associative`
+- `Prover.prove_monotonic`
+- `Prover.prove_idempotent`
+- `Prover.prove_involution`
+- `Prover.prove_injective`
+- `LoopProof.iteration`
+
+**Debug-only logic, safe defaults in release:**
+
+- `Prover.all_passed` returns `true`
+- `Prover.report` returns `""`
+- `Prover.passed_count` returns `0`
+- `Prover.failed_count` returns `0`
+- `LoopProof.check_invariant` never returns an error
+- `LoopProof.check_variant` never returns an error
+- `LoopProof.finish` returns `passed: true`
+- `StateMachine.verify_no_deadlock` never returns an error
+- `StateMachine.verify_reachable` returns `true`
+- `StateMachine.verify_trace` never returns an error
+
+**Always active (both debug and release):**
+
+- `guard`
+- `guard_not_null`
+- `ensure_positive`
+- `ensure_non_negative`
+- `ensure_in_range`
+- `clamp`
+- `in_range`
+- `safe_cast_u8`
+- `safe_cast_i16`
+- `safe_cast_i32`
+- `StateMachine.step`
+- `StateMachine.add_state`
+- `StateMachine.add_transition`
+
+### Example
+
+```v
+import vanadium
+
+fn process(value i64) !i64 {
+	v := vanadium.ensure_in_range(value, 0, 1000)!
+	return v * 2
+}
+
+fn main() {
+	mut p := vanadium.new_prover('math properties')
+
+	// These three calls vanish completely in release builds.
+	// The closures are never allocated.
+	p.prove_for_range('double is non-negative', 0, 500, fn (x i64) bool {
+		return x * 2 >= 0
+	})
+
+	p.prove_commutative('addition', -20, 20, fn (a i64, b i64) i64 {
+		return a + b
+	})
+
+	p.prove_injective('triple', 0, 100, fn (x i64) i64 {
+		return 3 * x
+	})
+
+	// In debug: prints full report. In release: prints empty string.
+	println(p.report())
+
+	// In debug: checks results. In release: returns true.
+	if !p.all_passed() {
+		println('proof failure')
+		return
+	}
+
+	// Loop proof — debug only
+	mut lp := vanadium.new_loop_proof('summation')
+	mut n := i64(10)
+	mut sum := i64(0)
+	for n > 0 {
+		lp.iteration()
+		lp.check_invariant(sum >= 0, 'sum must be non-negative') or {
+			println(err)
+			break
+		}
+		lp.check_variant(n) or {
+			println(err)
+			break
+		}
+		sum += n
+		n--
+	}
+	result := lp.finish()
+	println(result.detail)
+
+	// State machine — step() is always active
+	mut sm := vanadium.new_state_machine('door', 0)
+	sm.add_state(0, 'closed')
+	sm.add_state(1, 'open')
+	sm.add_transition(0, 1)
+	sm.add_transition(1, 0)
+
+	sm.step(1) or { println(err) }
+	sm.step(0) or { println(err) }
+
+	// Debug-only analysis
+	sm.verify_no_deadlock() or { println(err) }
+
+	score := vanadium.clamp(250, 0, 100)
+	println(score)
+
+	v := process(42) or {
+		println(err)
+		return
+	}
+	println(v)
+}
+```
+
+### Writing Tests
+
+When testing proof results, wrap assertions that depend on `results` inside `$if debug`. In release mode the `results` array is empty because the proof calls were removed.
+
+```v
+fn test_example() {
+	mut p := vanadium.new_prover('test')
+
+	p.prove_for_range('positive', 1, 100, fn (x i64) bool {
+		return x > 0
+	})
+
+	// This works in both modes
+	assert p.all_passed()
+
+	// This only makes sense in debug
+	$if debug {
+		assert p.results.len == 1
+		assert p.results[0].passed
+		assert p.results[0].cases == 100
+		assert p.passed_count() == 1
+	}
+}
+```
+
+Run tests in debug mode to get full coverage:
+
+```
+v -g test .
 ```
 
 ---

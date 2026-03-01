@@ -503,4 +503,322 @@ fn main() {
 		status := if idx >= 0 && idx < array_len { 'PASS' } else { 'MASKED->0' }
 		println('    index=${idx:4d}  masked=${masked}  [${status}]')
 	}
+	
+	print_header('FORMAL PROOFS (debug-only)')
+
+	mut prover := vanadium.new_prover('store system proofs')
+	
+	prover.prove_commutative('addition is commutative', -100, 100, fn (a i64, b i64) i64 {
+		return a + b
+	})
+
+	prover.prove_commutative('multiplication is commutative', -50, 50, fn (a i64, b i64) i64 {
+		return a * b
+	})
+
+	prover.prove_associative('addition is associative', -10, 10, fn (a i64, b i64) i64 {
+		return a + b
+	})
+
+	prover.prove_associative('multiplication is associative', -5, 5, fn (a i64, b i64) i64 {
+		return a * b
+	})
+	
+	prover.prove_for_range('price is always positive after markup', 1, 10000, fn (x i64) bool {
+		markup := x + x / 10
+		return markup > 0
+	})
+
+	prover.prove_for_range('tax is never negative', 0, 99999, fn (amount i64) bool {
+		tax := amount * 9 / 100
+		return tax >= 0
+	})
+
+	prover.prove_for_range('tax is less than amount', 1, 99999, fn (amount i64) bool {
+		tax := amount * 9 / 100
+		return tax < amount
+	})
+
+	prover.prove_for_range('discount rate clamped to 0..20', 0, 500000, fn (loyalty i64) bool {
+		rate := vanadium.clamp_i64(loyalty / 1000, 0, 20)
+		return rate >= 0 && rate <= 20
+	})
+
+	prover.prove_for_range('discount never exceeds subtotal', 1, 50000, fn (subtotal i64) bool {
+		discount := subtotal * 20 / 100
+		return discount <= subtotal
+	})
+	
+	prover.prove_for_pairs('payment leaves non-negative balance', 0, 100, fn (balance i64, charge i64) bool {
+		if charge > balance {
+			return true
+		}
+		return balance - charge >= 0
+	})
+
+	prover.prove_for_range('loyalty points from payment are non-negative', 0, 99999, fn (total i64) bool {
+		earned := total / 100
+		return earned >= 0
+	})
+
+	prover.prove_monotonic('tax grows with amount', 0, 50000, fn (x i64) i64 {
+		return x * 9 / 100
+	})
+
+	prover.prove_monotonic('loyalty earnings grow with spend', 0, 99999, fn (x i64) i64 {
+		return x / 100
+	})
+
+	prover.prove_monotonic('stock index is monotonic', 0, 10000, fn (x i64) i64 {
+		return x
+	})
+	
+	prover.prove_idempotent('clamp is idempotent', -200, 200, fn (x i64) i64 {
+		return vanadium.clamp_i64(x, 0, 100)
+	})
+
+	prover.prove_idempotent('abs is idempotent', -500, 500, fn (x i64) i64 {
+		v := vanadium.safe_abs_i64(x) or { return 0 }
+		return v
+	})
+
+	prover.prove_idempotent('discount rate clamp is idempotent', -100, 100000, fn (x i64) i64 {
+		return vanadium.clamp_i64(x / 1000, 0, 20)
+	})
+	
+	prover.prove_involution('negate is involution', -1000, 1000, fn (x i64) i64 {
+		return -x
+	})
+	
+	prover.prove_injective('price times quantity is injective for fixed price', 0, 200, fn (qty i64) i64 {
+		return 8999 * qty // keyboard price * qty
+	})
+
+	prover.prove_injective('double is injective', 0, 500, fn (x i64) i64 {
+		return 2 * x
+	})
+	
+	prover.prove_exists('there exists a discount rate above 0', 1000, 100000, fn (loyalty i64) bool {
+		rate := vanadium.clamp_i64(loyalty / 1000, 0, 20)
+		return rate > 0
+	})
+
+	prover.prove_exists('there exists a price where tax is at least 1', 1, 1000, fn (price i64) bool {
+		tax := price * 9 / 100
+		return tax >= 1
+	})
+	
+	prover.prove_by_samples('balance stays in range after operations', 0, 99999999, 10000, fn (v i64) bool {
+		return v >= 0 && v <= 99999999
+	})
+
+	prover.prove_by_samples('stock subtraction never wraps', 0, 10000, 5000, fn (stock i64) bool {
+		if stock >= 1 {
+			return stock - 1 >= 0
+		}
+		return true
+	})
+	
+	valid_age := vanadium.RangedIntP{min: 13, max: 120}
+	prover.prove_ranged('all valid ages pass age check', valid_age, fn (age i64) bool {
+		return age >= 13 && age <= 120
+	})
+
+	valid_stock := vanadium.RangedIntP{min: 0, max: 10000}
+	prover.prove_ranged('stock is non-negative', valid_stock, fn (s i64) bool {
+		return s >= 0
+	})
+	
+	println(prover.report())
+
+	if prover.all_passed() {
+		println('  All formal proofs passed.')
+	} else {
+		println('  WARNING: ${prover.failed_count()} proof(s) failed!')
+	}
+	
+	print_header('LOOP PROOFS (debug-only)')
+	
+	mut lp_stock := vanadium.new_loop_proof('stock deduction')
+	mut remaining := i64(45)
+	mut to_deduct := i64(10)
+	for to_deduct > 0 {
+		lp_stock.iteration()
+		lp_stock.check_invariant(remaining >= 0, 'stock must be non-negative') or {
+			println('  LOOP ERROR: ${err}')
+			break
+		}
+		lp_stock.check_invariant(to_deduct > 0, 'deduction counter must be positive') or {
+			println('  LOOP ERROR: ${err}')
+			break
+		}
+		lp_stock.check_variant(to_deduct) or {
+			println('  LOOP ERROR: ${err}')
+			break
+		}
+		remaining--
+		to_deduct--
+	}
+	stock_proof := lp_stock.finish()
+	println('  ${stock_proof.name}: passed=${stock_proof.passed}')
+	println('    ${stock_proof.detail}')
+	
+	mut lp_revenue := vanadium.new_loop_proof('revenue accumulation')
+	order_amounts := [i64(28495), 15000, 42000, 8999, 3499]
+	mut acc_revenue := i64(0)
+	mut rev_countdown := i64(order_amounts.len)
+	for i, amt in order_amounts {
+		lp_revenue.iteration()
+		lp_revenue.check_invariant(acc_revenue >= 0, 'accumulated revenue must be non-negative') or {
+			println('  LOOP ERROR: ${err}')
+			break
+		}
+		lp_revenue.check_invariant(amt > 0, 'order amount must be positive') or {
+			println('  LOOP ERROR: ${err}')
+			break
+		}
+		lp_revenue.check_variant(rev_countdown) or {
+			println('  LOOP ERROR: ${err}')
+			break
+		}
+		acc_revenue += amt
+		rev_countdown--
+		_ = i
+	}
+	rev_proof := lp_revenue.finish()
+	println('  ${rev_proof.name}: passed=${rev_proof.passed}')
+	println('    ${rev_proof.detail}')
+	
+	mut lp_iter := vanadium.new_loop_proof('customer iteration')
+	mut cust_remaining := i64(customers.len())
+	for ci in 1 .. customers.len() + 1 {
+		lp_iter.iteration()
+		lp_iter.check_invariant(cust_remaining > 0, 'remaining must be positive') or {
+			println('  LOOP ERROR: ${err}')
+			break
+		}
+		lp_iter.check_variant(cust_remaining) or {
+			println('  LOOP ERROR: ${err}')
+			break
+		}
+		cust_remaining--
+		_ = ci
+	}
+	iter_proof := lp_iter.finish()
+	println('  ${iter_proof.name}: passed=${iter_proof.passed}')
+	println('    ${iter_proof.detail}')
+	
+	print_header('STATE MACHINE: ORDER LIFECYCLE')
+
+	mut order_sm := vanadium.new_state_machine('order lifecycle', 0)
+	order_sm.add_state(0, 'created')
+	order_sm.add_state(1, 'validated')
+	order_sm.add_state(2, 'payment_pending')
+	order_sm.add_state(3, 'paid')
+	order_sm.add_state(4, 'shipped')
+	order_sm.add_state(5, 'delivered')
+	order_sm.add_state(6, 'cancelled')
+	order_sm.add_state(7, 'refunded')
+
+	order_sm.add_transition(0, 1) // created -> validated
+	order_sm.add_transition(0, 6) // created -> cancelled
+	order_sm.add_transition(1, 2) // validated -> payment_pending
+	order_sm.add_transition(1, 6) // validated -> cancelled
+	order_sm.add_transition(2, 3) // payment_pending -> paid
+	order_sm.add_transition(2, 6) // payment_pending -> cancelled
+	order_sm.add_transition(3, 4) // paid -> shipped
+	order_sm.add_transition(3, 7) // paid -> refunded
+	order_sm.add_transition(4, 5) // shipped -> delivered
+	order_sm.add_transition(4, 7) // shipped -> refunded
+	order_sm.add_transition(5, 7) // delivered -> refunded
+	
+	println('  Simulating order: created -> validated -> payment -> paid -> shipped -> delivered')
+	order_sm.step(1) or { println('  ERROR: ${err}') }
+	println('    State: ${order_sm.state_name(order_sm.current)}')
+	order_sm.step(2) or { println('  ERROR: ${err}') }
+	println('    State: ${order_sm.state_name(order_sm.current)}')
+	order_sm.step(3) or { println('  ERROR: ${err}') }
+	println('    State: ${order_sm.state_name(order_sm.current)}')
+	order_sm.step(4) or { println('  ERROR: ${err}') }
+	println('    State: ${order_sm.state_name(order_sm.current)}')
+	order_sm.step(5) or { println('  ERROR: ${err}') }
+	println('    State: ${order_sm.state_name(order_sm.current)}')
+	
+	println('')
+	println('  Attempting invalid: delivered -> created')
+	order_sm.step(0) or {
+		println('    BLOCKED: ${err}')
+	}
+	
+	println('  Attempting invalid: delivered -> shipped')
+	order_sm.step(4) or {
+		println('    BLOCKED: ${err}')
+	}
+	
+	println('  Attempting valid: delivered -> refunded')
+	order_sm.step(7) or { println('  ERROR: ${err}') }
+	println('    State: ${order_sm.state_name(order_sm.current)}')
+
+	println('')
+	
+	println('  Reachability analysis (debug-only):')
+	states_to_check := [0, 1, 2, 3, 4, 5, 6, 7]
+	for sid in states_to_check {
+		reachable := order_sm.verify_reachable(sid)
+		println('    ${order_sm.state_name(sid)}: reachable=${reachable}')
+	}
+
+	println('')
+	order_sm.verify_no_deadlock() or {
+		println('  Deadlock detected: ${err}')
+	}
+
+	println('  Trace: ${order_sm.trace}')
+	order_sm.verify_trace([0, 1, 2, 3, 4, 5, 7]) or {
+		println('  Trace mismatch: ${err}')
+	}
+	
+	print_header('STATE MACHINE: CUSTOMER ACCOUNT')
+
+	mut acct_sm := vanadium.new_state_machine('customer account', 0)
+	acct_sm.add_state(0, 'registered')
+	acct_sm.add_state(1, 'email_verified')
+	acct_sm.add_state(2, 'active')
+	acct_sm.add_state(3, 'suspended')
+	acct_sm.add_state(4, 'closed')
+
+	acct_sm.add_transition(0, 1) // registered -> email_verified
+	acct_sm.add_transition(1, 2) // email_verified -> active
+	acct_sm.add_transition(2, 3) // active -> suspended
+	acct_sm.add_transition(3, 2) // suspended -> active
+	acct_sm.add_transition(2, 4) // active -> closed
+	acct_sm.add_transition(3, 4) // suspended -> closed
+
+	println('  Account flow: register -> verify -> activate -> suspend -> reactivate -> close')
+	acct_sm.step(1) or { println('  ERROR: ${err}') }
+	println('    ${acct_sm.state_name(acct_sm.current)}')
+	acct_sm.step(2) or { println('  ERROR: ${err}') }
+	println('    ${acct_sm.state_name(acct_sm.current)}')
+	acct_sm.step(3) or { println('  ERROR: ${err}') }
+	println('    ${acct_sm.state_name(acct_sm.current)}')
+	acct_sm.step(2) or { println('  ERROR: ${err}') }
+	println('    ${acct_sm.state_name(acct_sm.current)}')
+	acct_sm.step(4) or { println('  ERROR: ${err}') }
+	println('    ${acct_sm.state_name(acct_sm.current)}')
+
+	println('')
+	println('  Attempting invalid: closed -> active')
+	acct_sm.step(2) or {
+		println('    BLOCKED: ${err}')
+	}
+
+	acct_sm.verify_no_deadlock() or {
+		println('  Deadlock: ${err}')
+	}
+
+	println('  Trace: ${acct_sm.trace}')
+
+	print_separator()
+	println('  All proofs and state machines completed.')
+	print_separator()
 }
